@@ -99,10 +99,11 @@ class Jwt_Auth_Public
      * Get the user and password in the request body and generate a JWT
      *
      * @param [type] $request [description]
+     * @param string $remote (optional) $remote endpoint to authenticate from. 
      *
      * @return [type] [description]
      */
-    public function generate_token($request)
+    public function generate_token($request, $remote = null)
     {
         $secret_key = defined('JWT_AUTH_SECRET_KEY') ? JWT_AUTH_SECRET_KEY : false;
         $username = $request->get_param('username');
@@ -118,8 +119,13 @@ class Jwt_Auth_Public
                 )
             );
         }
-        /** Try to authenticate the user with the passed credentials*/
-        $user = wp_authenticate($username, $password);
+
+        if (is_null($remote)) {
+            /** Try to authenticate the user with the passed credentials*/
+            $user = wp_authenticate($username, $password);
+        } else {
+            $user = $this->blk_remote_authenticate($username, $password, $remote);
+        }
 
         /** If the authentication fails return a error*/
         if (is_wp_error($user)) {
@@ -163,6 +169,49 @@ class Jwt_Auth_Public
 
         /** Let the user modify the data before send it back */
         return apply_filters('jwt_auth_token_before_dispatch', $data, $user);
+    }
+
+    /**
+     * Enable remote authentication.
+     * 
+     * Given a `$username` and `$password`, this function tries to authenticate the credentials against
+     * a remote endpoint. 
+     * The remote endpoint accepting credentials should satisfy the following contract terms:
+     *  - It must return response with status code 200 only when the authentication is successful, 
+     *    anything else is regarded as failed authentication.
+     *  e.g. wp-api-jwt-auth satisfies this contract.
+     * 
+     * This function is used by `blk-connect-slave` to serve connect plugin traffic from a slave server 
+     * while still authenticating from the master server. This is required because the token generated 
+     * from the remote master server cannot be validated on the slave server due to different `secrets`.
+     * 
+     * @param string $username remote username
+     * @param string $password remote password
+     * @param string $remote_endpoint remote endpoint satisfying the contract.
+     * 
+     * @return WP_User|WP_Error If remote_authentication is successful, return the user; else returns error.
+     */
+    public function blk_remote_authenticate($username, $password, $remote_endpoint) {
+        // check if $remote is a valid url
+        if (! $remote_endpoint = filter_var($remote_endpoint, FILTER_VALIDATE_URL)) {
+            return new WP_Error('blk_remote_authentication_error', "Invalid remote endpoint.", $remote_endpoint);
+        }
+
+        $remote_response = wp_remote_post($remote,
+                        array(
+                            'username' => $username,
+                            'password' => $password
+                        ));
+        if(200 == $remote_response['response']['code']) {
+            $user = get_user_by( 'email', $username );
+            if ($user) {
+                return $user;
+            } else {
+                return new WP_Error('blk_remote_authentication_error', 'Local user not found.', $username);
+            }
+        } else {
+            return new WP_Error('blk_remote_authentication_error', "Remote Authentication Failed.", $remote_response);
+        }
     }
 
     /**
