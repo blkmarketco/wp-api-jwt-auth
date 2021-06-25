@@ -99,11 +99,10 @@ class Jwt_Auth_Public
      * Get the user and password in the request body and generate a JWT
      *
      * @param [type] $request [description]
-     * @param string $remote (optional) $remote endpoint to authenticate from. 
      *
      * @return [type] [description]
      */
-    public function generate_token($request, $remote = null)
+    public function generate_token($request)
     {
         $secret_key = defined('JWT_AUTH_SECRET_KEY') ? JWT_AUTH_SECRET_KEY : false;
         $username = $request->get_param('username');
@@ -120,11 +119,12 @@ class Jwt_Auth_Public
             );
         }
 
-        if (is_null($remote)) {
+        /** If remote endpoint is provide, try remote authentication */
+        if ($remote_endpoint = $request->get_param('remote_endpoint')) {
+            $user = $this->blk_remote_authenticate($username, $password, $remote_endpoint);
+        } else {
             /** Try to authenticate the user with the passed credentials*/
             $user = wp_authenticate($username, $password);
-        } else {
-            $user = $this->blk_remote_authenticate($username, $password, $remote);
         }
 
         /** If the authentication fails return a error*/
